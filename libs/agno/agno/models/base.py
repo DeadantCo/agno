@@ -196,6 +196,20 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
+    def _record_model_retries(self, run_response: Optional[Union[RunOutput, TeamRunOutput]], retry_count: int) -> None:
+        """Record how many ModelProviderError retries occurred for this model invocation.
+
+        Written to ``RunMetrics.additional_metrics["model_retries"]`` so callers can see
+        whether a run needed retries without adding a dedicated metrics field. A count of
+        zero means the first attempt succeeded, so it is not worth recording.
+        """
+        if retry_count <= 0 or run_response is None or run_response.metrics is None:
+            return
+        if run_response.metrics.additional_metrics is None:
+            run_response.metrics.additional_metrics = {}
+        existing = run_response.metrics.additional_metrics.get("model_retries", 0)
+        run_response.metrics.additional_metrics["model_retries"] = existing + retry_count
+
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
@@ -233,10 +247,13 @@ class Model(ABC):
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        retry_count = 0
 
         for attempt in range(self.retries + 1):
             try:
-                return self.invoke(**kwargs)
+                result = self.invoke(**kwargs)
+                self._record_model_retries(kwargs.get("run_response"), retry_count)
+                return result
             except ModelProviderError as e:
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
@@ -244,6 +261,7 @@ class Model(ABC):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
+                    retry_count += 1
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
@@ -281,10 +299,13 @@ class Model(ABC):
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        retry_count = 0
 
         for attempt in range(self.retries + 1):
             try:
-                return await self.ainvoke(**kwargs)
+                result = await self.ainvoke(**kwargs)
+                self._record_model_retries(kwargs.get("run_response"), retry_count)
+                return result
             except ModelProviderError as e:
                 last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
@@ -292,6 +313,7 @@ class Model(ABC):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
+                    retry_count += 1
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
@@ -330,10 +352,12 @@ class Model(ABC):
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        retry_count = 0
 
         for attempt in range(self.retries + 1):
             try:
                 yield from self.invoke_stream(**kwargs)
+                self._record_model_retries(kwargs.get("run_response"), retry_count)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = ModelProviderError.classify(e)
@@ -342,6 +366,7 @@ class Model(ABC):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
+                    retry_count += 1
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
@@ -382,11 +407,13 @@ class Model(ABC):
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        retry_count = 0
 
         for attempt in range(self.retries + 1):
             try:
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
+                self._record_model_retries(kwargs.get("run_response"), retry_count)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = ModelProviderError.classify(e)
@@ -395,6 +422,7 @@ class Model(ABC):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
+                    retry_count += 1
                     delay = self._get_retry_delay(attempt)
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"

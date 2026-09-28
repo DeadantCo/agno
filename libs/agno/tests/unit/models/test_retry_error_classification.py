@@ -7,8 +7,10 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.exceptions import ModelProviderError, RetryableModelProviderError
+from agno.metrics import RunMetrics
 from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
+from agno.run.agent import RunOutput
 
 
 @pytest.fixture
@@ -518,6 +520,84 @@ def test_stream_guidance_count_preserved_across_plain_retries(model_with_guidanc
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+
+
+# =============================================================================
+# Tests for surfacing retry counts on RunOutput.metrics (#499)
+# =============================================================================
+
+
+def test_sync_retry_count_recorded_on_run_metrics(model_with_retries):
+    """Verify that transient retries are recorded in run_response.metrics.additional_metrics."""
+    call_count = 0
+    mock_response = MagicMock()
+    run_response = RunOutput(metrics=RunMetrics())
+
+    def mock_invoke(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise ModelProviderError("Server error", status_code=500)
+        return mock_response
+
+    with patch.object(model_with_retries, "invoke", side_effect=mock_invoke):
+        result = model_with_retries._invoke_with_retry(messages=[], run_response=run_response)
+
+        assert result == mock_response
+        # Two failures occurred before the third attempt succeeded.
+        assert run_response.metrics.additional_metrics == {"model_retries": 2}
+
+
+def test_sync_no_retry_count_recorded_when_first_attempt_succeeds(model_with_retries):
+    """Verify that additional_metrics stays untouched when no retry was needed."""
+    mock_response = MagicMock()
+    run_response = RunOutput(metrics=RunMetrics())
+
+    with patch.object(model_with_retries, "invoke", return_value=mock_response):
+        result = model_with_retries._invoke_with_retry(messages=[], run_response=run_response)
+
+        assert result == mock_response
+        assert run_response.metrics.additional_metrics is None
+
+
+@pytest.mark.asyncio
+async def test_async_retry_count_recorded_on_run_metrics(model_with_retries):
+    """Verify that transient retries are recorded in run_response.metrics.additional_metrics (async)."""
+    call_count = 0
+    mock_response = MagicMock()
+    run_response = RunOutput(metrics=RunMetrics())
+
+    async def mock_ainvoke(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise ModelProviderError("Server error", status_code=503)
+        return mock_response
+
+    with patch.object(model_with_retries, "ainvoke", side_effect=mock_ainvoke):
+        result = await model_with_retries._ainvoke_with_retry(messages=[], run_response=run_response)
+
+        assert result == mock_response
+        assert run_response.metrics.additional_metrics == {"model_retries": 1}
+
+
+def test_sync_stream_retry_count_recorded_on_run_metrics(model_with_two_retries):
+    """Verify that transient retries are recorded for streaming invocations too."""
+    call_count = 0
+    run_response = RunOutput(metrics=RunMetrics())
+
+    def mock_invoke_stream(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise ModelProviderError("Server error", status_code=500)
+            yield  # Make it a generator
+        yield "chunk"
+
+    with patch.object(model_with_two_retries, "invoke_stream", side_effect=mock_invoke_stream):
+        list(model_with_two_retries._invoke_stream_with_retry(messages=[], run_response=run_response))
+
+        assert run_response.metrics.additional_metrics == {"model_retries": 1}
 
 
 @pytest.mark.asyncio
