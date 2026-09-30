@@ -2440,6 +2440,10 @@ class FunctionCall(BaseModel):
         # Check if the hook has a run_context argument
         if "run_context" in signature(hook).parameters:
             hook_args["run_context"] = self.function._run_context
+        # Check if the hook wants the Function object it intercepts, so it can read or adjust
+        # attributes such as stop_after_tool_call for this call
+        if "tool_definition" in signature(hook).parameters:
+            hook_args["tool_definition"] = self.function
         if "name" in signature(hook).parameters:
             hook_args["name"] = name
         if "function_name" in signature(hook).parameters:

@@ -1467,6 +1467,48 @@ def test_tool_hook_receives_messages_via_run_context():
     assert captured_messages == run_context.messages
 
 
+def test_tool_hook_receives_tool_definition():
+    """Tool hooks that declare tool_definition receive the Function they intercept."""
+    captured: Dict[str, Any] = {}
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any], tool_definition: Function):
+        captured["tool_definition"] = tool_definition
+        tool_definition.stop_after_tool_call = False
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook], stop_after_tool_call=True)
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured["tool_definition"] is test_func
+    # The hook's change is visible to the caller that reads the flag after execution
+    assert test_func.stop_after_tool_call is False
+
+
+def test_tool_hook_without_tool_definition_still_works():
+    """Hooks that do not declare tool_definition are unaffected."""
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    result = FunctionCall(function=test_func, arguments={"param1": "v"}).execute()
+    assert result.status == "success"
+    assert result.result == "processed-v"
+
+
 # ----------------------------------------------------------------------
 # Framework-injected parameters: schema exclusion and the drop guard
 # ----------------------------------------------------------------------
