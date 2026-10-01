@@ -1467,6 +1467,34 @@ def test_tool_hook_receives_messages_via_run_context():
     assert captured_messages == run_context.messages
 
 
+def test_tool_hook_receives_tool_definition():
+    """A hook that declares `tool_definition` receives the Function object it intercepts,
+    and can mutate it (e.g. stop_after_tool_call) to influence the agent loop."""
+    captured_function: Optional[Function] = None
+
+    def review_hook(
+        function_name: str, function_call: Callable, arguments: Dict[str, Any], tool_definition: Function
+    ):
+        nonlocal captured_function
+        captured_function = tool_definition
+        tool_definition.stop_after_tool_call = False
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[review_hook], stop_after_tool_call=True)
+    def submit_decision(param1: str) -> str:
+        return f"decided-{param1}"
+
+    submit_decision.process_entrypoint()
+
+    call = FunctionCall(function=submit_decision, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "decided-value1"
+    assert captured_function is submit_decision
+    assert submit_decision.stop_after_tool_call is False
+
+
 # ----------------------------------------------------------------------
 # Framework-injected parameters: schema exclusion and the drop guard
 # ----------------------------------------------------------------------
