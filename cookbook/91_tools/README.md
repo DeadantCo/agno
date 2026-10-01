@@ -42,3 +42,7 @@ agent = Agent(tools=[tools])
 - `tool_decorator/` - Custom tool patterns
 - `tool_hooks/` - Pre/post processing
 - `async/` - Async execution
+
+## Other Examples
+
+- `buywhere_tools.py` - Singapore product price search across Harvey Norman, Shopee, and Lazada using the BuyWhere API

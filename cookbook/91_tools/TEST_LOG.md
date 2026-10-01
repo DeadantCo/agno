@@ -1,5 +1,15 @@
 # Test Log
 
+### buywhere_tools.py (new cookbook: Singapore product price search)
+
+**Status:** PASS
+
+**Description:** Added a new cookbook demonstrating a custom `search_singapore_products` tool that queries the BuyWhere API (https://buywhere.ai) for real-time Singapore e-commerce prices (Harvey Norman, Shopee, Lazada). The tool reads `BUYWHERE_API_KEY` from the environment and returns an error dict instead of calling the API when the key is missing. Uses `httpx`, which already ships with agno, so no new dependency was needed.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_buywhere_cookbook.py` — 2 passed. Tests load the cookbook module directly from its file path and mock `httpx.get` to verify (1) the missing-API-key path returns an error without making a network call, and (2) the request is built with the expected URL, query param, and bearer-token header, and the parsed JSON is returned. Not run live against the real BuyWhere API or an LLM (no `BUYWHERE_API_KEY` / `OPENAI_API_KEY` in this environment).
+
+---
+
 ### atomic_mail_tools.py (AtomicMailTools + workflow)
 
 **Status:** PASS
