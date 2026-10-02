@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
@@ -63,8 +63,8 @@ class FileTools(Toolkit):
 
     ``exclude_patterns`` here is a **listing filter, not an access boundary**: results
     from ``list_files``, ``search_files`` and ``search_content`` skip matching paths,
-    but ``read_file``, ``read_file_chunk``, ``save_file``, ``replace_file_chunk`` and
-    ``delete_file`` do not consult it — an agent that names an excluded path directly
+    but ``read_file``, ``read_file_chunk``, ``save_file``, ``replace_file_chunk``,
+    ``edit_file`` and ``delete_file`` do not consult it — an agent that names an excluded path directly
     still reads or writes it. The shared default list includes credential files, so an
     agent given ``FileTools`` over a directory holding secrets can still read them by
     name. Use ``agno.tools.workspace.Workspace`` where exclusion has to be enforced:
@@ -102,6 +102,7 @@ class FileTools(Toolkit):
         enable_search_files: bool = True,
         enable_read_file_chunk: bool = True,
         enable_replace_file_chunk: bool = True,
+        enable_edit_file: bool = True,
         enable_search_content: bool = True,
         expose_base_directory: bool = False,
         max_file_length: int = 10000000,
@@ -121,6 +122,10 @@ class FileTools(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        # Tracks the mtime observed the last time a file was fully read (via read_file)
+        # or written (via save_file/edit_file), keyed by resolved path. edit_file
+        # consults this to enforce the read-before-edit guard and detect staleness.
+        self._observed_mtimes: Dict[Path, float] = {}
         if all or enable_save_file:
             tools.append(self.save_file)
         if all or enable_read_file:
@@ -135,6 +140,8 @@ class FileTools(Toolkit):
             tools.append(self.read_file_chunk)
         if all or enable_replace_file_chunk:
             tools.append(self.replace_file_chunk)
+        if all or enable_edit_file:
+            tools.append(self.edit_file)
         if all or enable_search_content:
             tools.append(self.search_content)
 
@@ -163,6 +170,7 @@ class FileTools(Toolkit):
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
             file_path.write_text(contents, encoding=encoding)
+            self._observed_mtimes[file_path] = file_path.stat().st_mtime
             log_debug(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
@@ -223,6 +231,92 @@ class FileTools(Toolkit):
             log_error(f"Error patching file: {str(e)}")
             return f"Error patching file: {e}"
 
+    def edit_file(
+        self, file_name: str, old_text: str, new_text: str, replace_all: bool = False, encoding: str = "utf-8"
+    ) -> str:
+        """Edit a file by replacing an exact text match with new text.
+
+        This is a targeted alternative to ``save_file`` (which requires rewriting the
+        whole file) and ``replace_file_chunk`` (which requires correct line numbers).
+        ``old_text`` must match exactly one location in the file unless
+        ``replace_all=True``; include enough surrounding context to make the match
+        unique.
+
+        To guard against editing a file the agent never actually looked at (so
+        ``old_text`` might only exist in lines it never saw), the file must have been
+        fully read via ``read_file`` or written via ``save_file``/``edit_file``
+        beforehand — a partial ``read_file_chunk`` does not count. If the file's mtime
+        has changed since that observation (e.g. edited elsewhere), the edit is
+        refused so the agent re-reads it instead of clobbering unseen changes.
+
+        As a special case, ``old_text=""`` against a file that does not exist creates
+        it with ``new_text`` as its contents.
+
+        :param file_name: The name of the file to edit.
+        :param old_text: The exact text to find and replace. Must match uniquely unless
+            replace_all is True. Pass "" to create a new file with new_text as contents.
+        :param new_text: The text to replace old_text with.
+        :param replace_all: If True, replace every occurrence of old_text instead of
+            requiring a single unique match.
+        :param encoding: Encoding to use, default - utf-8
+        :return: The file name if successful, otherwise returns an error message.
+        """
+        try:
+            log_debug(f"Editing file: {file_name}")
+            safe, file_path = self._check_path(file_name, self.base_dir)
+            if not safe:
+                log_error(f"Attempted to edit file: {file_name}")
+                return "Error: Incorrect file_name"
+
+            if old_text == new_text:
+                return "No changes needed: old_text and new_text are identical"
+
+            if not file_path.exists():
+                if old_text == "":
+                    return self.save_file(contents=new_text, file_name=file_name, encoding=encoding)
+                return f"Error editing file: file {file_name} does not exist"
+
+            if file_path not in self._observed_mtimes:
+                return (
+                    f"Error editing file: {file_name} has not been read yet. "
+                    "Use read_file to read the full file before editing it."
+                )
+
+            current_mtime = file_path.stat().st_mtime
+            if current_mtime != self._observed_mtimes[file_path]:
+                return (
+                    f"Error editing file: {file_name} has changed on disk since it was last read. "
+                    "Use read_file to re-read it before editing."
+                )
+
+            contents = file_path.read_text(encoding=encoding)
+            count = contents.count(old_text)
+
+            if count == 0:
+                return (
+                    f"Error editing file: old_text not found in {file_name}. "
+                    "Make sure it matches exactly, including whitespace and indentation."
+                )
+
+            if not replace_all and count > 1:
+                return (
+                    f"Error editing file: old_text matches {count} locations in {file_name}. "
+                    "Provide more surrounding context to make the match unique, or pass replace_all=True."
+                )
+
+            if replace_all:
+                new_contents = contents.replace(old_text, new_text)
+            else:
+                new_contents = contents.replace(old_text, new_text, 1)
+
+            file_path.write_text(new_contents, encoding=encoding)
+            self._observed_mtimes[file_path] = file_path.stat().st_mtime
+            log_debug(f"Edited: {file_path}")
+            return str(file_name)
+        except Exception as e:
+            log_error(f"Error editing file: {str(e)}")
+            return f"Error editing file: {e}"
+
     def read_file(self, file_name: str, encoding: str = "utf-8") -> str:
         """Reads the contents of the file `file_name` and returns the contents if successful.
 
@@ -242,6 +336,7 @@ class FileTools(Toolkit):
             if len(contents.split(self.line_separator)) > self.max_file_lines:
                 return "Error reading file: file too long. Use read_file_chunk instead"
 
+            self._observed_mtimes[file_path] = file_path.stat().st_mtime
             return str(contents)
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
@@ -258,8 +353,10 @@ class FileTools(Toolkit):
             if safe:
                 if path.is_dir():
                     path.rmdir()
+                    self._observed_mtimes.pop(path, None)
                     return ""
                 path.unlink()
+                self._observed_mtimes.pop(path, None)
                 return ""
             else:
                 log_error(f"Attempt to delete file outside {self.base_dir}: {file_name}")

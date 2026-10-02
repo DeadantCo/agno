@@ -172,6 +172,126 @@ def test_replace_file_chunk():
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
+def test_edit_file_requires_read_before_edit():
+    """edit_file refuses to touch a file that has never been fully read."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="existing", file_name="file.txt")
+        # Bypass the save_file tracking to simulate a file the agent never observed.
+        resolved = (Path(tempdirname) / "file.txt").resolve()
+        f._observed_mtimes.pop(resolved, None)
+
+        result = f.edit_file(file_name="file.txt", old_text="existing", new_text="new")
+
+        assert "has not been read yet" in result
+        assert f.read_file(file_name="file.txt") == "existing"
+
+
+def test_edit_file_rejects_partial_read():
+    """A read_file_chunk alone does not satisfy the read-before-edit guard."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="line0\nline1\n", file_name="file.txt")
+        resolved = (Path(tempdirname) / "file.txt").resolve()
+        f._observed_mtimes.pop(resolved, None)
+        f.read_file_chunk(file_name="file.txt", start_line=0, end_line=0)
+
+        result = f.edit_file(file_name="file.txt", old_text="line0", new_text="lineX")
+
+        assert "has not been read yet" in result
+
+
+def test_edit_file_detects_staleness():
+    """edit_file refuses an edit if the file's mtime changed since the last read."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="original", file_name="file.txt")
+        f.read_file(file_name="file.txt")
+
+        # Simulate an external modification after the read observed the file.
+        file_path = Path(tempdirname) / "file.txt"
+        file_path.write_text("changed externally")
+        import os
+
+        os.utime(file_path, (os.path.getmtime(file_path) + 10, os.path.getmtime(file_path) + 10))
+
+        result = f.edit_file(file_name="file.txt", old_text="original", new_text="new")
+
+        assert "changed on disk" in result
+
+
+def test_edit_file_unique_match_succeeds():
+    """edit_file applies the change when old_text matches exactly once."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="def foo():\n    return 1\n", file_name="file.py")
+        f.read_file(file_name="file.py")
+
+        result = f.edit_file(file_name="file.py", old_text="return 1", new_text="return 2")
+
+        assert result == "file.py"
+        assert f.read_file(file_name="file.py") == "def foo():\n    return 2\n"
+
+
+def test_edit_file_rejects_ambiguous_match():
+    """edit_file refuses when old_text matches more than once and replace_all is False."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="x = 1\nx = 1\n", file_name="file.txt")
+        f.read_file(file_name="file.txt")
+
+        result = f.edit_file(file_name="file.txt", old_text="x = 1", new_text="x = 2")
+
+        assert "matches 2 locations" in result
+        assert f.read_file(file_name="file.txt") == "x = 1\nx = 1\n"
+
+
+def test_edit_file_replace_all():
+    """edit_file replaces every occurrence when replace_all=True."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="x = 1\nx = 1\n", file_name="file.txt")
+        f.read_file(file_name="file.txt")
+
+        result = f.edit_file(file_name="file.txt", old_text="x = 1", new_text="x = 2", replace_all=True)
+
+        assert result == "file.txt"
+        assert f.read_file(file_name="file.txt") == "x = 2\nx = 2\n"
+
+
+def test_edit_file_creates_missing_file_with_empty_old_text():
+    """edit_file with old_text="" creates a new file, matching Claude Code's Edit semantics."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+
+        result = f.edit_file(file_name="new_file.txt", old_text="", new_text="hello world")
+
+        assert result == "new_file.txt"
+        assert f.read_file(file_name="new_file.txt") == "hello world"
+
+
+def test_edit_file_rejects_identical_old_and_new_text():
+    """edit_file returns a no-op error instead of silently writing when old_text == new_text."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+        f.save_file(contents="same", file_name="file.txt")
+        f.read_file(file_name="file.txt")
+
+        result = f.edit_file(file_name="file.txt", old_text="same", new_text="same")
+
+        assert "No changes needed" in result
+
+
+def test_edit_file_missing_file_without_empty_old_text():
+    """edit_file on a nonexistent file with non-empty old_text returns an error, not a creation."""
+    with tempfile.TemporaryDirectory() as tempdirname:
+        f = FileTools(base_dir=Path(tempdirname))
+
+        result = f.edit_file(file_name="missing.txt", old_text="something", new_text="else")
+
+        assert "does not exist" in result
+
+
 def test_check_path():
     """Test the path-containment check used by all file operations"""
     with tempfile.TemporaryDirectory() as tempdirname:
