@@ -224,6 +224,15 @@ class Model(ABC):
 
         return True
 
+    def _record_retry(self, run_response: Optional[Union[RunOutput, TeamRunOutput]]) -> None:
+        """Count a model retry in the run's ``additional_metrics["model_retries"]``."""
+        metrics = getattr(run_response, "metrics", None)
+        if metrics is None:
+            return
+        if metrics.additional_metrics is None:
+            metrics.additional_metrics = {}
+        metrics.additional_metrics["model_retries"] = metrics.additional_metrics.get("model_retries", 0) + 1
+
     def _invoke_with_retry(self, **kwargs) -> ModelResponse:
         """
         Invoke the model with retry logic for ModelProviderError.
@@ -245,6 +254,7 @@ class Model(ABC):
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
+                    self._record_retry(kwargs.get("run_response"))
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
@@ -261,6 +271,7 @@ class Model(ABC):
                         model_name=self.name,
                         model_id=self.id,
                     )
+                self._record_retry(kwargs.get("run_response"))
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
 
@@ -293,6 +304,7 @@ class Model(ABC):
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
+                    self._record_retry(kwargs.get("run_response"))
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
@@ -310,6 +322,7 @@ class Model(ABC):
                         model_id=self.id,
                     )
 
+                self._record_retry(kwargs.get("run_response"))
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
 
@@ -343,6 +356,7 @@ class Model(ABC):
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
+                    self._record_retry(kwargs.get("run_response"))
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
@@ -361,6 +375,7 @@ class Model(ABC):
                         model_id=self.id,
                     )
 
+                self._record_retry(kwargs.get("run_response"))
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
 
@@ -396,6 +411,7 @@ class Model(ABC):
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
+                    self._record_retry(kwargs.get("run_response"))
                     log_warning(
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
@@ -414,6 +430,7 @@ class Model(ABC):
                         model_id=self.id,
                     )
 
+                self._record_retry(kwargs.get("run_response"))
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
 
