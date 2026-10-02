@@ -55,6 +55,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         GroundingMetadata,
+        HttpOptions,
         Operation,
         Part,
         Retrieval,
@@ -202,14 +203,26 @@ class Gemini(Model):
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
-        if self.timeout is not None:
-            http_options = client_params.get("http_options", {})
-            if isinstance(http_options, dict):
-                http_options["timeout"] = int(self.timeout * 1000)
-                client_params["http_options"] = http_options
-
         if self.client_params:
             client_params.update(self.client_params)
+
+        # Apply self.timeout to the final, merged http_options so that it is respected
+        # regardless of whether http_options came from client_params, and regardless of
+        # whether http_options is a plain dict or a `google.genai.types.HttpOptions` object.
+        # An explicit timeout already present on http_options always takes precedence.
+        if self.timeout is not None:
+            timeout_ms = int(self.timeout * 1000)
+            http_options = client_params.get("http_options")
+            if http_options is None:
+                client_params["http_options"] = {"timeout": timeout_ms}
+            elif isinstance(http_options, dict):
+                http_options.setdefault("timeout", timeout_ms)
+                client_params["http_options"] = http_options
+            elif isinstance(http_options, HttpOptions):
+                if http_options.timeout is None:
+                    http_options.timeout = timeout_ms
+            else:
+                log_warning(f"Unsupported http_options type {type(http_options)}; timeout was not applied.")
 
         client_params = inject_agno_client_header(client_params)
 
