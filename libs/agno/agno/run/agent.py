@@ -606,8 +606,11 @@ RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
+def run_output_event_from_dict(data: dict) -> Union[BaseRunOutputEvent, "RunOutput"]:
     event_type = data.get("event", "")
+    # A stream started with yield_run_output=True ends with the serialized RunOutput, which has no "event" key.
+    if not event_type and data.get("run_id") is not None:
+        return RunOutput.from_dict(data)
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not cls:
         raise ValueError(f"Unknown event type: {event_type}")
