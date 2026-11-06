@@ -55,5 +55,11 @@ python cookbook/90_models/dashscope/image_agent.py
 python cookbook/90_models/dashscope/image_agent_bytes.py
 ```
 
+### 8. Run Agent with a native reasoning model
+
+```shell
+python cookbook/90_models/dashscope/reasoning_agent.py
+```
+
 For more information about Qwen models and capabilities, visit:
 - [Model Studio Console](https://modelstudio.console.alibabacloud.com/)
