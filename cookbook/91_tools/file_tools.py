@@ -149,6 +149,29 @@ agent_content_search = Agent(
     markdown=True,
 )
 
+# Example 5b: Regex search with grep. grep uses ripgrep when `rg` is installed and
+# falls back to Python `re` otherwise, returning the same JSON either way.
+# output_mode controls verbosity: files_with_matches, content or count.
+agent_grep = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        FileTools(
+            Path("tmp/file"),
+            enable_read_file=True,
+            enable_list_files=True,
+            enable_grep=True,
+            enable_save_file=False,
+        )
+    ],
+    description="You find code and text in a project using regular expressions.",
+    instructions=[
+        "Use grep with a regex and the include glob to find definitions, e.g. include='*.py'",
+        "Start with output_mode='files_with_matches', then use 'content' on the files that matter",
+        "If a result has truncated=true, narrow the pattern, path or include instead of raising limit",
+    ],
+    markdown=True,
+)
+
 # Example 6: Default exclusions skip noise directories (.venv, .git, __pycache__,
 # node_modules, build artifacts, etc.) so agents don't waste context on installed
 # packages or VCS metadata. See DEFAULT_EXCLUDE_PATTERNS for the full list.
@@ -265,6 +288,12 @@ if __name__ == "__main__":
     print("\n=== Content Search Example ===")
     agent_content_search.print_response(
         "Search inside all files for the word 'Python' and summarize what you find",
+        markdown=True,
+    )
+
+    print("\n=== Regex Grep Example ===")
+    agent_grep.print_response(
+        "Find every line that defines a Python function or class and group them by file",
         markdown=True,
     )
 

@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agno.tools.file import FileTools
+from agno.tools.file.file import GREP_MAX_LIMIT
 
 
 @pytest.mark.parametrize(("start", "end"), [(-1, 1), (0, -1), (3, 1), (4, 4), (1, 8)])
@@ -559,3 +561,163 @@ def test_search_content_honors_exclusions():
         assert result["matches_found"] == 1
         assert "real.py" in file_names
         assert not any(".venv" in f for f in file_names)
+
+
+# ---------------------------------------------------------------------------
+# grep
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["python", "ripgrep"])
+def grep_tools(request, tmp_path):
+    if request.param == "ripgrep" and shutil.which("rg") is None:
+        pytest.skip("ripgrep is not installed")
+    (tmp_path / "a.py").write_text("def alpha():\n    pass\n\nclass Beta:\n    # TODO high priority\n    pass\n")
+    (tmp_path / "b.txt").write_text("nothing here\nDEF upper\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "c.py").write_text("def gamma():\n    return 1\n")
+    (tmp_path / "sub" / "d.proto").write_text("message Foo {\n  string def_name = 1;\n}\n")
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "hidden.py").write_text("def hidden():\n    pass\n")
+    (tmp_path / ".env").write_text("def secret\n")
+    (tmp_path / ".env.example").write_text("def placeholder\n")
+    (tmp_path / "blob.bin").write_bytes(b"def\x00binary")
+    tools = FileTools(base_dir=tmp_path)
+    if request.param == "python":
+        tools._rg_path = None
+    else:
+        assert tools._rg_path
+    return tools
+
+
+def _grep(tools, pattern, **kwargs):
+    return json.loads(tools.grep(pattern, **kwargs))
+
+
+def test_grep_registered_by_default_and_flag(tmp_path):
+    assert "grep" in FileTools(base_dir=tmp_path).functions
+    assert "grep" not in FileTools(base_dir=tmp_path, enable_grep=False).functions
+    assert "grep" in FileTools(base_dir=tmp_path, enable_grep=False, all=True).functions
+
+
+def test_grep_files_with_matches_is_default_and_regex(grep_tools):
+    result = _grep(grep_tools, r"def \w+\(")
+    assert result["output_mode"] == "files_with_matches"
+    assert result["truncated"] is False
+    assert [h["file"] for h in result["results"]] == ["a.py", "sub/c.py"]
+
+
+def test_grep_skips_excluded_binary_and_keeps_exempt_files(grep_tools):
+    files = [h["file"] for h in _grep(grep_tools, "def")["results"]]
+    assert ".venv/hidden.py" not in files
+    assert ".env" not in files
+    assert "blob.bin" not in files
+    assert ".env.example" in files
+    assert "sub/d.proto" in files
+
+
+def test_grep_ignore_case(grep_tools):
+    assert [h["file"] for h in _grep(grep_tools, "def upper")["results"]] == []
+    result = _grep(grep_tools, "def upper", ignore_case=True)
+    assert [h["file"] for h in result["results"]] == ["b.txt"]
+
+
+def test_grep_include_glob(grep_tools):
+    assert [h["file"] for h in _grep(grep_tools, "def", include="*.proto")["results"]] == ["sub/d.proto"]
+    assert [h["file"] for h in _grep(grep_tools, "def", include="**/*.py")["results"]] == ["a.py", "sub/c.py"]
+    assert [h["file"] for h in _grep(grep_tools, "def", include="sub/*.py")["results"]] == ["sub/c.py"]
+
+
+def test_grep_path_scoping_file_and_directory(grep_tools):
+    assert [h["file"] for h in _grep(grep_tools, "def", path="sub", include="*.py")["results"]] == ["sub/c.py"]
+    assert [h["file"] for h in _grep(grep_tools, "def", path="a.py")["results"]] == ["a.py"]
+
+
+def test_grep_path_outside_base_dir_is_rejected(grep_tools):
+    assert grep_tools.grep("def", path="../").startswith("Error")
+    assert grep_tools.grep("def", path="/etc").startswith("Error")
+
+
+def test_grep_content_mode(grep_tools):
+    result = _grep(grep_tools, r"class [A-Z]", output_mode="content")
+    assert result["results"] == [{"file": "a.py", "line": 4, "text": "class Beta:", "is_match": True}]
+
+
+def test_grep_content_mode_with_context(grep_tools):
+    result = _grep(grep_tools, "TODO", path="a.py", output_mode="content", context=1)
+    assert [(h["line"], h["is_match"]) for h in result["results"]] == [(4, False), (5, True), (6, False)]
+
+
+def test_grep_count_mode(grep_tools):
+    result = _grep(grep_tools, "def", output_mode="count", ignore_case=True)
+    counts = {h["file"]: h["count"] for h in result["results"]}
+    assert counts["a.py"] == 1
+    assert counts["b.txt"] == 1
+    assert counts["sub/d.proto"] == 1
+
+
+def test_grep_multiline(grep_tools):
+    assert _grep(grep_tools, r"alpha\(\):.pass")["results"] == []
+    result = _grep(grep_tools, r"alpha\(\):.*?pass", output_mode="content", multiline=True)
+    assert [(h["line"], h["text"]) for h in result["results"]] == [(1, "def alpha():"), (2, "    pass")]
+
+
+def test_grep_limit_truncates(grep_tools):
+    result = _grep(grep_tools, "def", limit=1)
+    assert len(result["results"]) == 1
+    assert result["truncated"] is True
+
+    result = _grep(grep_tools, "def", output_mode="content", limit=1)
+    assert len([h for h in result["results"] if h["is_match"]]) == 1
+    assert result["truncated"] is True
+
+    result = _grep(grep_tools, "def", output_mode="count", limit=1)
+    assert len(result["results"]) == 1
+    assert result["truncated"] is True
+
+
+def test_grep_limit_is_capped(tmp_path):
+    for i in range(GREP_MAX_LIMIT + 5):
+        (tmp_path / f"f{i:04d}.txt").write_text("hit\n")
+    tools = FileTools(base_dir=tmp_path)
+    tools._rg_path = None
+    result = _grep(tools, "hit", limit=10**6)
+    assert len(result["results"]) == GREP_MAX_LIMIT
+    assert result["truncated"] is True
+
+
+def test_grep_no_match_and_errors(grep_tools):
+    assert _grep(grep_tools, "zzz_not_present") == {
+        "pattern": "zzz_not_present",
+        "output_mode": "files_with_matches",
+        "results": [],
+        "truncated": False,
+    }
+    assert grep_tools.grep("").startswith("Error")
+    assert grep_tools.grep("(unclosed").startswith("Error")
+    assert grep_tools.grep("def", path="missing").startswith("Error")
+    assert grep_tools.grep("def", output_mode="bogus").startswith("Error")
+
+
+def test_grep_pattern_starting_with_dash(grep_tools):
+    (grep_tools.base_dir / "flags.txt").write_text("--verbose\n")
+    assert [h["file"] for h in _grep(grep_tools, "--verbose")["results"]] == ["flags.txt"]
+
+
+def test_grep_backends_return_identical_results(tmp_path):
+    if shutil.which("rg") is None:
+        pytest.skip("ripgrep is not installed")
+    (tmp_path / "a.py").write_text("one\ntwo target\nthree\nfour\ntarget five\nsix\n")
+    (tmp_path / "b.py").write_text("target\n")
+    rg_tools = FileTools(base_dir=tmp_path)
+    py_tools = FileTools(base_dir=tmp_path)
+    py_tools._rg_path = None
+    for kwargs in (
+        {},
+        {"output_mode": "count"},
+        {"output_mode": "content"},
+        {"output_mode": "content", "context": 1},
+        {"output_mode": "content", "context": 2, "limit": 2},
+        {"output_mode": "content", "limit": 1},
+    ):
+        assert rg_tools.grep("target", **kwargs) == py_tools.grep("target", **kwargs), kwargs
