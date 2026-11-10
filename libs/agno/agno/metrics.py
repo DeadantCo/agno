@@ -286,6 +286,9 @@ class RunMetrics(BaseMetrics):
     time_to_first_token: Optional[float] = None
     duration: Optional[float] = None
 
+    # Number of model request retries performed during the run (excludes the first attempt)
+    retries: int = 0
+
     # Per-model metrics breakdown
     # Keys: "model", "output_model", "memory_model", "eval_model", etc.
     # Values: List of ModelMetrics (one per unique provider+id)
@@ -344,6 +347,7 @@ class RunMetrics(BaseMetrics):
             cache_read_tokens=self.cache_read_tokens + getattr(other, "cache_read_tokens", 0),
             cache_write_tokens=self.cache_write_tokens + getattr(other, "cache_write_tokens", 0),
             reasoning_tokens=self.reasoning_tokens + getattr(other, "reasoning_tokens", 0),
+            retries=self.retries + getattr(other, "retries", 0),
         )
         # Preserve timer from self
         if self.timer is not None:

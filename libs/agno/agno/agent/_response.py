@@ -45,6 +45,7 @@ from agno.utils.events import (
     create_followups_started_event,
     create_model_request_completed_event,
     create_model_request_started_event,
+    create_model_retry_event,
     create_parser_model_response_completed_event,
     create_parser_model_response_started_event,
     create_reasoning_completed_event,
@@ -1117,6 +1118,24 @@ def handle_model_response_stream(
                     )
                 continue
 
+            if model_response_event.event == ModelResponseEvent.model_retry.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_retry_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                            retry_attempt=model_response_event.retry_attempt,
+                            max_retries=model_response_event.max_retries,
+                            retry_delay=model_response_event.retry_delay,
+                            error=model_response_event.retry_error,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
             # Handle compression events
             if model_response_event.event == ModelResponseEvent.compression_started.value:
                 if stream_events:
@@ -1276,6 +1295,24 @@ async def ahandle_model_response_stream(
                             reasoning_tokens=model_response_event.reasoning_tokens,
                             cache_read_tokens=model_response_event.cache_read_tokens,
                             cache_write_tokens=model_response_event.cache_write_tokens,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.model_retry.value:
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_model_retry_event(
+                            from_run_response=run_response,
+                            model=agent.model.id,
+                            model_provider=agent.model.provider,
+                            retry_attempt=model_response_event.retry_attempt,
+                            max_retries=model_response_event.max_retries,
+                            retry_delay=model_response_event.retry_delay,
+                            error=model_response_event.retry_error,
                         ),
                         run_response,
                         events_to_skip=agent.events_to_skip,  # type: ignore

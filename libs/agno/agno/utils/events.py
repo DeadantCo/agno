@@ -15,6 +15,7 @@ from agno.run.agent import (
     MemoryUpdateStartedEvent,
     ModelRequestCompletedEvent,
     ModelRequestStartedEvent,
+    ModelRetryEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
@@ -54,6 +55,7 @@ from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateComplete
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
 from agno.run.team import ModelRequestStartedEvent as TeamModelRequestStartedEvent
+from agno.run.team import ModelRetryEvent as TeamModelRetryEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
@@ -901,6 +903,29 @@ def create_model_request_completed_event(
     )
 
 
+def create_model_retry_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    retry_attempt: Optional[int] = None,
+    max_retries: Optional[int] = None,
+    retry_delay: Optional[float] = None,
+    error: Optional[str] = None,
+) -> ModelRetryEvent:
+    return ModelRetryEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        retry_attempt=retry_attempt,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        error=error,
+    )
+
+
 def create_team_model_request_started_event(
     from_run_response: TeamRunOutput,
     model: Optional[str] = None,
@@ -942,6 +967,29 @@ def create_team_model_request_completed_event(
         reasoning_tokens=reasoning_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
+    )
+
+
+def create_team_model_retry_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    retry_attempt: Optional[int] = None,
+    max_retries: Optional[int] = None,
+    retry_delay: Optional[float] = None,
+    error: Optional[str] = None,
+) -> TeamModelRetryEvent:
+    return TeamModelRetryEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        retry_attempt=retry_attempt,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        error=error,
     )
 
 
