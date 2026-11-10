@@ -435,6 +435,40 @@ class TestGeminiTimeout:
             assert kwargs["http_options"]["timeout"] == 10000
             assert kwargs["vertexai"] is True
 
+    def test_timeout_applied_with_http_options_object(self):
+        """Test that timeout is applied when client_params http_options is an HttpOptions object."""
+        from google.genai.types import HttpOptions
+
+        user_options = HttpOptions(api_version="v1beta")
+        model = Gemini(api_key="test-key", timeout=0.1, client_params={"http_options": user_options})
+
+        client = model.get_client()
+
+        assert client._api_client._http_options.timeout == 100
+        assert client._api_client._http_options.api_version == "v1beta"
+        # The caller's object is not mutated
+        assert user_options.timeout is None
+
+    def test_timeout_applied_with_http_options_dict(self):
+        """Test that timeout is applied when client_params http_options is a dict without a timeout."""
+        model = Gemini(api_key="test-key", timeout=0.1, client_params={"http_options": {"api_version": "v1beta"}})
+
+        client = model.get_client()
+
+        assert client._api_client._http_options.timeout == 100
+        assert client._api_client._http_options.api_version == "v1beta"
+        assert "timeout" not in model.client_params["http_options"]
+
+    def test_explicit_http_options_object_timeout_wins(self):
+        """Test that a timeout set on an HttpOptions object takes precedence over the timeout field."""
+        from google.genai.types import HttpOptions
+
+        model = Gemini(api_key="test-key", timeout=0.1, client_params={"http_options": HttpOptions(timeout=5000)})
+
+        client = model.get_client()
+
+        assert client._api_client._http_options.timeout == 5000
+
 
 class TestGeminiHeaders:
     def test_api_client_header_present(self):

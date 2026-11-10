@@ -10,6 +10,7 @@ from agno.utils.media import resolve_image_mime_type
 try:
     from google.genai.types import (
         FunctionDeclaration,
+        HttpOptions,
         Schema,
         Tool,
     )
@@ -18,6 +19,37 @@ try:
     )
 except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
+
+
+def apply_timeout_to_client_params(client_params: Dict[str, Any], timeout: Optional[float]) -> Dict[str, Any]:
+    """
+    Apply a timeout (in seconds) to the effective `http_options` of a Gemini client.
+
+    Works whether `http_options` is a dict or a `google.genai.types.HttpOptions` object.
+    A timeout already set inside `http_options` takes precedence. The caller's
+    `http_options` value is never mutated.
+
+    Args:
+        client_params: The kwargs dict that will be passed to `genai.Client(...)`.
+        timeout: Timeout in seconds. Nothing is changed when None.
+
+    Returns:
+        The same dict, with `http_options.timeout` set (in milliseconds) when it was unset.
+    """
+    if timeout is None:
+        return client_params
+
+    timeout_ms = int(timeout * 1000)
+    http_options = client_params.get("http_options")
+    if http_options is None:
+        client_params["http_options"] = {"timeout": timeout_ms}
+    elif isinstance(http_options, dict):
+        if http_options.get("timeout") is None:
+            client_params["http_options"] = {**http_options, "timeout": timeout_ms}
+    elif isinstance(http_options, HttpOptions):
+        if http_options.timeout is None:
+            client_params["http_options"] = http_options.model_copy(update={"timeout": timeout_ms})
+    return client_params
 
 
 def inject_agno_client_header(client_params: Dict[str, Any]) -> Dict[str, Any]:
