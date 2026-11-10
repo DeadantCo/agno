@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from google.genai.types import Part
 
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
@@ -809,6 +810,25 @@ def test_format_image_for_message_falls_back_to_jpeg_for_unknown_bytes():
 
     assert result is not None
     assert result["mime_type"] == "image/jpeg"
+
+
+def test_format_image_for_message_content_passes_raw_bytes():
+    result = format_image_for_message(Image(content=PNG_BYTES))
+
+    assert result is not None
+    assert isinstance(result["data"], bytes)
+    assert result["data"] == PNG_BYTES
+    assert Part.from_bytes(**result).inline_data.data == PNG_BYTES
+
+
+def test_format_image_for_message_url_passes_raw_bytes():
+    with patch.object(Image, "get_content_bytes", return_value=PNG_BYTES):
+        result = format_image_for_message(Image(url="https://example.com/photo.png"))
+
+    assert result is not None
+    assert isinstance(result["data"], bytes)
+    assert result["data"] == PNG_BYTES
+    assert Part.from_bytes(**result).inline_data.data == PNG_BYTES
 
 
 @pytest.mark.parametrize("use_async", [False, True])
