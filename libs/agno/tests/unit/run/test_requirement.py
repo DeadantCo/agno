@@ -1,5 +1,9 @@
 """Unit tests for agno.run.requirement — RunRequirement serialization round-trips."""
 
+import typing
+
+import pytest
+
 from agno.models.response import ToolExecution, UserInputField
 from agno.run.requirement import RunRequirement
 
@@ -298,3 +302,13 @@ class TestFromDictUserFeedbackSchemaPropagation:
         assert req.tool_execution.user_feedback_schema[1].selected_options is None
         assert req.tool_execution.answered is None
         assert req.needs_user_feedback is True
+
+
+class TestPublicMethodAnnotations:
+    """Strict mypy flags calls to unannotated functions, so mutators must declare a return type."""
+
+    @pytest.mark.parametrize("method_name", ["confirm", "reject", "set_external_execution_result"])
+    def test_mutators_return_none_annotation(self, method_name):
+        hints = typing.get_type_hints(getattr(RunRequirement, method_name))
+        assert "return" in hints
+        assert hints["return"] is type(None)
