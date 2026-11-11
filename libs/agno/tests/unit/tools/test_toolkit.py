@@ -558,6 +558,49 @@ class TestToolDecoratorOnClassMethods:
         # Test with regular callable
         assert toolkit._get_tool_name(example_func) == "example_func"
 
+    def test_tool_decorator_preserves_wrapper_metadata_sync(self):
+        """The bound wrapper keeps __qualname__, __annotations__ and __wrapped__."""
+
+        class MyTools(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+            @tool(description="A test tool")
+            def my_tool(self, x: int) -> str:
+                """My docstring."""
+                return str(x)
+
+        fn = MyTools().functions["my_tool"].entrypoint
+
+        assert fn.__name__ == "my_tool"
+        assert fn.__qualname__.endswith("MyTools.my_tool")
+        assert fn.__doc__ == "My docstring."
+        assert fn.__annotations__.get("x") is int
+        assert fn.__annotations__.get("return") is str
+        assert hasattr(fn, "__wrapped__")
+        assert fn(x=3) == "3"
+
+    @pytest.mark.asyncio
+    async def test_tool_decorator_preserves_wrapper_metadata_async(self):
+        """The async bound wrapper keeps __qualname__, __annotations__ and __wrapped__."""
+
+        class MyTools(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", async_tools=[(self.my_tool, "my_tool")])
+
+            @tool(description="An async test tool")
+            async def my_tool(self, x: int) -> str:
+                """My async docstring."""
+                return str(x)
+
+        fn = MyTools().async_functions["my_tool"].entrypoint
+
+        assert fn.__name__ == "my_tool"
+        assert fn.__qualname__.endswith("MyTools.my_tool")
+        assert fn.__annotations__.get("x") is int
+        assert hasattr(fn, "__wrapped__")
+        assert await fn(x=4) == "4"
+
 
 async def async_example_func(a: int, b: int) -> int:
     """Async example function for testing."""
