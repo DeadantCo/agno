@@ -374,15 +374,19 @@ class AgentOSClient:
         self,
         raw_stream: AsyncIterator[str],
         event_parser: Callable[[dict], Any],
+        output_parser: Optional[Callable[[dict], Any]] = None,
     ) -> AsyncIterator[Any]:
         """Parse SSE stream into typed event objects.
 
         Args:
             raw_stream: Raw SSE lines from streaming response
             event_parser: Function to parse event dict into typed object
+            output_parser: Function to parse the terminal run output payload. The server sends
+                this payload (which has no "event" key) when the run is started with
+                yield_run_output=True.
 
         Yields:
-            Parsed event objects
+            Parsed event objects, or the run output when an output payload is received
         """
         from agno.utils.log import logger
 
@@ -397,6 +401,11 @@ class AgentOSClient:
                     # Extract and parse JSON payload
                     json_str = line[6:]  # Remove "data: " prefix
                     event_dict = json.loads(json_str)
+
+                    # Terminal run output payloads carry no "event" key
+                    if output_parser is not None and isinstance(event_dict, dict) and "event" not in event_dict:
+                        yield output_parser(event_dict)
+                        continue
 
                     # Parse into typed event using provided factory
                     event = event_parser(event_dict)
@@ -650,7 +659,7 @@ class AgentOSClient:
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
-        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
+        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict, RunOutput.from_dict):
             yield event
 
     async def continue_agent_run(
@@ -735,7 +744,7 @@ class AgentOSClient:
                 data[key] = value
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
-        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict):
+        async for event in self._parse_sse_events(raw_stream, run_output_event_from_dict, RunOutput.from_dict):
             yield event
 
     async def cancel_agent_run(self, agent_id: str, run_id: str, headers: Optional[Dict[str, str]] = None) -> None:
@@ -926,7 +935,7 @@ class AgentOSClient:
 
         # Get raw SSE stream and parse into typed events
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
-        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
+        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict, TeamRunOutput.from_dict):
             yield event
 
     async def cancel_team_run(self, team_id: str, run_id: str, headers: Optional[Dict[str, str]] = None) -> None:
@@ -1048,7 +1057,7 @@ class AgentOSClient:
                 data[key] = value
 
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
-        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
+        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict, TeamRunOutput.from_dict):
             yield event
 
     async def list_workflows(self, headers: Optional[Dict[str, str]] = None) -> List[WorkflowSummaryResponse]:
