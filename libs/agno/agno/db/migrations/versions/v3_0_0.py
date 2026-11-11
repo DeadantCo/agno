@@ -780,14 +780,16 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        # Server-side cursor: without it the driver buffers every session's runs before the
-        # first fetchmany, and BATCH_SIZE would bound nothing.
-        result = sess.execute(
+    # Move all runs into the runs table. The legacy rows are read on a server-side cursor
+    # (without it the driver buffers every session's runs before the first fetchmany), and
+    # each batch is committed on a separate session, so a crash keeps every finished batch.
+    # Inserts are ON CONFLICT DO NOTHING, so a rerun skips what was already copied.
+    migrated_runs = 0
+    with db.Session() as reader, db.Session() as writer:  # type: ignore
+        result = reader.execute(
             text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"),
             execution_options={"stream_results": True},
         )
-        migrated_runs = 0
         while True:
             batch = result.fetchmany(BATCH_SIZE)
             if not batch:
@@ -799,16 +801,17 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
 
             if rows:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                sess.execute(insert_stmt, rows)
+                with writer.begin():
+                    writer.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+    log_info(
+        f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+    )
 
-        return True
+    return True
 
 
 async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
@@ -845,11 +848,13 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Move all runs into the runs table
-        # stream() uses a server-side cursor; execute() would buffer every session's runs
-        # before the first fetchmany, and BATCH_SIZE would bound nothing.
-        result = await sess.stream(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
-        migrated_runs = 0
+    # Move all runs into the runs table. stream() uses a server-side cursor (execute() would
+    # buffer every session's runs before the first fetchmany), and each batch is committed on
+    # a separate session, so a crash keeps every finished batch. Inserts are
+    # ON CONFLICT DO NOTHING, so a rerun skips what was already copied.
+    migrated_runs = 0
+    async with db.async_session_factory() as reader, db.async_session_factory() as writer:  # type: ignore
+        result = await reader.stream(text(f"SELECT session_id, user_id, runs FROM {full_table} WHERE runs IS NOT NULL"))
         while True:
             batch = await result.fetchmany(BATCH_SIZE)
             if not batch:
@@ -861,16 +866,17 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
 
             if rows:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
-                await sess.execute(insert_stmt, rows)
+                async with writer.begin():
+                    await writer.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+    log_info(
+        f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+    )
 
-        return True
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -1229,11 +1235,15 @@ def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        # Copy every legacy run into the runs table
-        result = sess.execute(
-            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
+    # Copy every legacy run into the runs table. The legacy rows are read on a server-side
+    # cursor (otherwise the driver buffers the whole result), and each batch is committed on
+    # a separate session, so a crash keeps every finished batch and a rerun skips them.
+    migrated_runs = 0
+    with db.Session() as reader, db.Session() as writer:  # type: ignore
+        result = reader.execute(
+            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL"),
+            execution_options={"stream_results": True},
         )
-        migrated_runs = 0
         while True:
             batch = result.fetchmany(BATCH_SIZE)
             if not batch:
@@ -1250,16 +1260,17 @@ def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
                 # ON DUPLICATE KEY UPDATE that effectively does nothing: keeps idempotency
                 # without raising on previously-migrated runs.
                 insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
-                sess.execute(insert_stmt)
+                with writer.begin():
+                    writer.execute(insert_stmt)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+    log_info(
+        f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+    )
 
-        return True
+    return True
 
 
 async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool:
@@ -1300,12 +1311,15 @@ async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> boo
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
-        result = await sess.execute(
+    # stream() uses a server-side cursor (execute() would buffer every row), and each batch is
+    # committed on a separate session, so a crash keeps every finished batch and a rerun skips them.
+    migrated_runs = 0
+    async with db.async_session_factory() as reader, db.async_session_factory() as writer:  # type: ignore
+        result = await reader.stream(
             text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
         )
-        migrated_runs = 0
         while True:
-            batch = result.fetchmany(BATCH_SIZE)
+            batch = await result.fetchmany(BATCH_SIZE)
             if not batch:
                 break
 
@@ -1316,16 +1330,17 @@ async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> boo
             if rows:
                 insert_stmt = mysql.insert(runs_table).values(rows)
                 insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
-                await sess.execute(insert_stmt)
+                async with writer.begin():
+                    await writer.execute(insert_stmt)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
-        log_info(
-            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
-            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
-        )
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+    log_info(
+        f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+    )
 
-        return True
+    return True
 
 
 def _revert_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
