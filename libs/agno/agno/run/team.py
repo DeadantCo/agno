@@ -168,6 +168,7 @@ class TeamRunEvent(str, Enum):
 
     model_request_started = "TeamModelRequestStarted"
     model_request_completed = "TeamModelRequestCompleted"
+    model_retry = "TeamModelRetry"
 
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
@@ -495,6 +496,21 @@ class ModelRequestCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ModelRetryEvent(BaseTeamRunEvent):
+    """Event sent when a failed model request is about to be retried"""
+
+    event: str = TeamRunEvent.model_retry.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    # 1-based number of the retry about to be made
+    retry_attempt: Optional[int] = None
+    max_retries: Optional[int] = None
+    # Seconds waited before the retry
+    retry_delay: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class CompressionStartedEvent(BaseTeamRunEvent):
     """Event sent when tool result compression is about to start"""
 
@@ -669,6 +685,7 @@ TeamRunOutputEvent = Union[
     OutputModelResponseCompletedEvent,
     ModelRequestStartedEvent,
     ModelRequestCompletedEvent,
+    ModelRetryEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
     FollowupsStartedEvent,
@@ -718,6 +735,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
     TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    TeamRunEvent.model_retry.value: ModelRetryEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
     TeamRunEvent.followups_started.value: FollowupsStartedEvent,

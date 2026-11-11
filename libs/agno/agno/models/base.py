@@ -196,6 +196,24 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
+    def _record_retry(
+        self,
+        run_response: Optional[Union[RunOutput, TeamRunOutput]],
+        attempt: int,
+        delay: float,
+        error: ModelProviderError,
+    ) -> ModelResponse:
+        """Count a retry in the run metrics and build the model_retry event describing it."""
+        if run_response is not None and run_response.metrics is not None:
+            run_response.metrics.retries += 1
+        return ModelResponse(
+            event=ModelResponseEvent.model_retry.value,
+            retry_attempt=attempt + 1,
+            max_retries=self.retries,
+            retry_delay=delay,
+            retry_error=str(error.message),
+        )
+
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
@@ -247,6 +265,7 @@ class Model(ABC):
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
+                    self._record_retry(kwargs.get("run_response"), attempt, delay, last_exception)
 
                     sleep(delay)
                 else:
@@ -295,6 +314,7 @@ class Model(ABC):
                     log_warning(
                         f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
+                    self._record_retry(kwargs.get("run_response"), attempt, delay, last_exception)
 
                     await asyncio.sleep(delay)
                 else:
@@ -346,6 +366,7 @@ class Model(ABC):
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
                     )
+                    yield self._record_retry(kwargs.get("run_response"), attempt, delay, last_exception)
 
                     sleep(delay)
                 else:
@@ -399,6 +420,7 @@ class Model(ABC):
                         f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
                         f"Retrying in {delay}s...: {e}",
                     )
+                    yield self._record_retry(kwargs.get("run_response"), attempt, delay, last_exception)
 
                     await asyncio.sleep(delay)
                 else:
@@ -1352,6 +1374,10 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            # Pass retry notifications through untouched; they carry no message data
+            if response_delta.event == ModelResponseEvent.model_retry.value:
+                yield response_delta
+                continue
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -1459,7 +1485,11 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
-                        if self.cache_response and isinstance(response, ModelResponse):
+                        if (
+                            self.cache_response
+                            and isinstance(response, ModelResponse)
+                            and response.event != ModelResponseEvent.model_retry.value
+                        ):
                             streaming_responses.append(response)
                         yield response
                 finally:
@@ -1633,6 +1663,10 @@ class Model(ABC):
             run_response=run_response,
             compress_tool_results=compress_tool_results,
         ):
+            # Pass retry notifications through untouched; they carry no message data
+            if response_delta.event == ModelResponseEvent.model_retry.value:
+                yield response_delta
+                continue
             # Set TTFT when first chunk arrives (guard ensures first-call-wins)
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -1740,7 +1774,11 @@ class Model(ABC):
                         run_response=run_response,
                         compress_tool_results=_compress_tool_results,
                     ):
-                        if self.cache_response and isinstance(model_response_delta, ModelResponse):
+                        if (
+                            self.cache_response
+                            and isinstance(model_response_delta, ModelResponse)
+                            and model_response_delta.event != ModelResponseEvent.model_retry.value
+                        ):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
                 finally:

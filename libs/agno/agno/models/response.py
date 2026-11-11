@@ -21,6 +21,7 @@ class ModelResponseEvent(str, Enum):
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
     fallback_model_activated = "FallbackModelActivated"
+    model_retry = "ModelRetry"
 
 
 @dataclass
@@ -163,6 +164,12 @@ class ModelResponse:
     reasoning_tokens: Optional[int] = None
     cache_read_tokens: Optional[int] = None
     cache_write_tokens: Optional[int] = None
+
+    # Retry details (for model_retry events)
+    retry_attempt: Optional[int] = None
+    max_retries: Optional[int] = None
+    retry_delay: Optional[float] = None
+    retry_error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize ModelResponse to dictionary for caching."""

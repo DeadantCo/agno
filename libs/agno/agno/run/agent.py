@@ -185,6 +185,7 @@ class RunEvent(str, Enum):
 
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
+    model_retry = "ModelRetry"
 
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
@@ -493,6 +494,21 @@ class ModelRequestCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class ModelRetryEvent(BaseAgentRunEvent):
+    """Event sent when a failed model request is about to be retried"""
+
+    event: str = RunEvent.model_retry.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    # 1-based number of the retry about to be made
+    retry_attempt: Optional[int] = None
+    max_retries: Optional[int] = None
+    # Seconds waited before the retry
+    retry_delay: Optional[float] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class CompressionStartedEvent(BaseAgentRunEvent):
     """Event sent when tool result compression is about to start"""
 
@@ -581,6 +597,7 @@ RunOutputEvent = Union[
     OutputModelResponseCompletedEvent,
     ModelRequestStartedEvent,
     ModelRequestCompletedEvent,
+    ModelRetryEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
     CompactionStartedEvent,
@@ -628,6 +645,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
     RunEvent.model_request_started.value: ModelRequestStartedEvent,
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    RunEvent.model_retry.value: ModelRetryEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
     RunEvent.compaction_started.value: CompactionStartedEvent,
