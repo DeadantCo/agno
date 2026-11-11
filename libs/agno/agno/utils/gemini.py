@@ -187,20 +187,18 @@ def has_self_reference(schema: Dict, target_ref: str) -> bool:
 
 def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     # Case 1: Image is a URL
-    # Download the image from the URL and add it as base64 encoded data
+    # Download the image from the URL and pass the raw bytes (Part.from_bytes expects bytes)
     if image.url is not None:
         content_bytes = image.get_content_bytes()  # type: ignore
         if content_bytes is not None:
             try:
-                import base64
-
                 image_data = {
                     "mime_type": resolve_image_mime_type(
                         mime_type=image.mime_type,
                         image_format=image.format,
                         image_bytes=content_bytes,
                     ),
-                    "data": base64.b64encode(content_bytes).decode("utf-8"),
+                    "data": content_bytes,
                 }
                 return image_data
             except Exception as e:
@@ -234,17 +232,15 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             return None
 
     # Case 3: Image is a bytes object
-    # Add it as base64 encoded data
+    # Pass the raw bytes (Part.from_bytes expects bytes)
     elif image.content is not None and isinstance(image.content, bytes):
-        import base64
-
         image_data = {
             "mime_type": resolve_image_mime_type(
                 mime_type=image.mime_type,
                 image_format=image.format,
                 image_bytes=image.content,
             ),
-            "data": base64.b64encode(image.content).decode("utf-8"),
+            "data": image.content,
         }
         return image_data
     else:
