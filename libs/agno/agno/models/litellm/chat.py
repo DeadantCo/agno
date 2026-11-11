@@ -45,8 +45,8 @@ class LiteLLM(Model):
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     max_tokens: Optional[int] = None
-    temperature: float = 0.7
-    top_p: float = 1.0
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
     extra_headers: Optional[Dict[str, Any]] = None
     extra_query: Optional[Dict[str, Any]] = None
@@ -215,10 +215,12 @@ class LiteLLM(Model):
         """
         base_params: Dict[str, Any] = {
             "model": self.id,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
         }
 
+        if self.temperature is not None:
+            base_params["temperature"] = self.temperature
+        if self.top_p is not None:
+            base_params["top_p"] = self.top_p
         if self.max_tokens:
             base_params["max_tokens"] = self.max_tokens
         if self.api_key:
