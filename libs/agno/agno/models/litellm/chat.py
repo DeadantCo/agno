@@ -45,8 +45,8 @@ class LiteLLM(Model):
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     max_tokens: Optional[int] = None
-    temperature: float = 0.7
-    top_p: float = 1.0
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
     extra_headers: Optional[Dict[str, Any]] = None
     extra_query: Optional[Dict[str, Any]] = None
