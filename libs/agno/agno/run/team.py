@@ -731,8 +731,13 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
+def team_run_output_event_from_dict(data: dict) -> Union[BaseTeamRunEvent, "TeamRunOutput"]:
     event_type = data.get("event", "")
+    # A stream started with yield_run_output=True ends with the serialized run output, which has no "event" key.
+    if not event_type and data.get("run_id") is not None:
+        if data.get("team_id") is not None:
+            return TeamRunOutput.from_dict(data)
+        return run_output_event_from_dict(data)  # type: ignore
     if event_type in {e.value for e in RunEvent}:
         return run_output_event_from_dict(data)  # type: ignore
     else:
