@@ -215,6 +215,7 @@ elasticsearch = ["elasticsearch[async]>=8.14.0"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
+opengauss = ["sqlalchemy", "psycopg2-binary"]
 opensearch = ["opensearch-py"]
 pgvector = ["pgvector"]
 pinecone = ["pinecone==5.4.2"]
@@ -386,6 +387,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opengauss]",
   "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
