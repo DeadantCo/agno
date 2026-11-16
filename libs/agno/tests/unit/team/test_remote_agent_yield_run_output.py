@@ -61,7 +61,9 @@ async def test_remote_agent_stream_with_yield_run_output_handles_final_run_outpu
             )
         ]
 
-    assert captured["data"].get("yield_run_output") is not None
+    # The flag is handled on the client, which builds the RunOutput itself; the remote
+    # stream route does not accept it.
+    assert "yield_run_output" not in captured["data"]
     # The terminal RunOutput must be surfaced (team delegate code captures it) and
     # must not be logged as an "Unknown event type" error.
     assert not log_exc.called, f"Unexpected error logged: {log_exc.call_args_list}"
