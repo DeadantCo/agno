@@ -86,6 +86,10 @@ class ReaderFactory:
             "name": "DoclingReader",
             "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
         },
+        "opendataloader_pdf": {
+            "name": "OpenDataLoaderPDFReader",
+            "description": "Extracts layout-aware content from PDFs (reading order, tables, headings) using the opendataloader-pdf parser",
+        },
     }
 
     @classmethod
@@ -322,6 +326,18 @@ class ReaderFactory:
         return DoclingReader(**config)
 
     @classmethod
+    def _get_opendataloader_pdf_reader(cls, **kwargs) -> Reader:
+        """Get OpenDataLoader PDF reader instance."""
+        from agno.knowledge.reader.opendataloader_pdf_reader import OpenDataLoaderPDFReader
+
+        config: Dict[str, Any] = {
+            "name": "OpenDataLoader PDF Reader",
+            "description": "Extracts layout-aware content from PDFs (reading order, tables, headings) using the opendataloader-pdf parser",
+        }
+        config.update(kwargs)
+        return OpenDataLoaderPDFReader(**config)
+
+    @classmethod
     def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"
@@ -367,6 +383,7 @@ class ReaderFactory:
             "llms_txt": ("agno.knowledge.reader.llms_txt_reader", "LLMsTxtReader"),
             "sitemap": ("agno.knowledge.reader.sitemap_reader", "SitemapReader"),
             "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
+            "opendataloader_pdf": ("agno.knowledge.reader.opendataloader_pdf_reader", "OpenDataLoaderPDFReader"),
         }
 
         if reader_key not in reader_class_map:

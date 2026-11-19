@@ -16,6 +16,7 @@ Specific reader, cloud storage, and vector database integrations.
 | [readers/01_documents.py](./readers/01_documents.py) | PDF, DOCX, PPTX, Excel |
 | [readers/02_data.py](./readers/02_data.py) | CSV, JSON |
 | [readers/03_web.py](./readers/03_web.py) | Website, YouTube, ArXiv, Firecrawl |
+| [readers/04_opendataloader_pdf.py](./readers/04_opendataloader_pdf.py) | Layout-aware PDF parsing with opendataloader-pdf (needs Java) |
 
 ## Cloud Storage
 
