@@ -37,7 +37,7 @@ from agno.db.utils import CustomJSONEncoder
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import text
+    from sqlalchemy import select, text
     from sqlalchemy.dialects import mysql, postgresql, sqlite
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -500,6 +500,64 @@ def _build_run_rows(
     return rows
 
 
+_RUN_ID_LOOKUP_CHUNK = 500
+
+
+def _run_id_chunks(rows: List[Dict[str, Any]]) -> List[List[str]]:
+    run_ids = list({row["run_id"] for row in rows})
+    return [run_ids[i : i + _RUN_ID_LOOKUP_CHUNK] for i in range(0, len(run_ids), _RUN_ID_LOOKUP_CHUNK)]
+
+
+def _stored_run_sessions(sess, runs_table, rows: List[Dict[str, Any]]) -> Dict[str, set]:
+    """Map each run_id in `rows` that is already in the runs table to the sessions that hold it."""
+    stored: Dict[str, set] = {}
+    for chunk in _run_id_chunks(rows):
+        query = select(runs_table.c.run_id, runs_table.c.session_id).where(runs_table.c.run_id.in_(chunk))
+        for run_id, session_id in sess.execute(query).fetchall():
+            stored.setdefault(run_id, set()).add(session_id)
+    return stored
+
+
+async def _async_stored_run_sessions(sess, runs_table, rows: List[Dict[str, Any]]) -> Dict[str, set]:
+    """Async variant of :func:`_stored_run_sessions`."""
+    stored: Dict[str, set] = {}
+    for chunk in _run_id_chunks(rows):
+        query = select(runs_table.c.run_id, runs_table.c.session_id).where(runs_table.c.run_id.in_(chunk))
+        for run_id, session_id in (await sess.execute(query)).fetchall():
+            stored.setdefault(run_id, set()).add(session_id)
+    return stored
+
+
+def _select_new_run_rows(
+    rows: List[Dict[str, Any]],
+    stored: Dict[str, set],
+    table_name: str,
+    unique_on_run_id: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return the rows that will be inserted and warn about runs that cannot be stored.
+
+    A run is skipped when the runs table already holds its run_id (or its run_id and
+    session_id pair when `unique_on_run_id` is False). The warning is only logged when
+    the stored copy belongs to another session: a copy for the same session is an earlier,
+    interrupted attempt of this migration.
+    """
+    new_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        run_id, session_id = row["run_id"], row["session_id"]
+        owners = stored.get(run_id, set())
+        if session_id in owners or (unique_on_run_id and owners):
+            if session_id not in owners:
+                log_warning(
+                    f"-- Run '{run_id}' of session '{session_id}' in {table_name} was not copied: the runs table "
+                    f"is keyed on run_id and already holds that run_id for session '{sorted(owners)[0]}'. "
+                    f"The run stays in the legacy '{table_name}.runs' column."
+                )
+            continue
+        stored.setdefault(run_id, set()).add(session_id)
+        new_rows.append(row)
+    return new_rows
+
+
 def _forget_table(db, table_name: Optional[str], attribute: str) -> None:
     """Drop a table from the adapter's SQLAlchemy state after it goes away.
 
@@ -798,6 +856,8 @@ def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
+                rows = _select_new_run_rows(rows, _stored_run_sessions(sess, runs_table, rows), table_name)
+            if rows:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
                 sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
@@ -860,6 +920,9 @@ async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> 
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
+                stored = await _async_stored_run_sessions(sess, runs_table, rows)
+                rows = _select_new_run_rows(rows, stored, table_name)
+            if rows:
                 insert_stmt = postgresql.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
                 await sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
@@ -913,6 +976,8 @@ def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
+                rows = _select_new_run_rows(rows, _stored_run_sessions(sess, runs_table, rows), table_name)
+            if rows:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
                 sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
@@ -962,6 +1027,9 @@ async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bo
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
+            if rows:
+                stored = await _async_stored_run_sessions(sess, runs_table, rows)
+                rows = _select_new_run_rows(rows, stored, table_name)
             if rows:
                 insert_stmt = sqlite.insert(runs_table).on_conflict_do_nothing(index_elements=["run_id"])
                 await sess.execute(insert_stmt, rows)
@@ -1246,6 +1314,13 @@ def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
             if rows:
+                rows = _select_new_run_rows(
+                    rows,
+                    _stored_run_sessions(sess, runs_table, rows),
+                    table_name,
+                    unique_on_run_id=type(db).__name__ != "SingleStoreDb",
+                )
+            if rows:
                 insert_stmt = mysql.insert(runs_table).values(rows)
                 # ON DUPLICATE KEY UPDATE that effectively does nothing: keeps idempotency
                 # without raising on previously-migrated runs.
@@ -1313,6 +1388,11 @@ async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> boo
             for session_id, user_id, runs in batch:
                 rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
 
+            if rows:
+                stored = await _async_stored_run_sessions(sess, runs_table, rows)
+                rows = _select_new_run_rows(
+                    rows, stored, table_name, unique_on_run_id=type(db).__name__ != "SingleStoreDb"
+                )
             if rows:
                 insert_stmt = mysql.insert(runs_table).values(rows)
                 insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
