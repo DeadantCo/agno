@@ -49,12 +49,17 @@ def test_shared_run_id_is_not_silently_dropped(legacy_db_with_shared_run_id, cap
     assert ("sess-b", "req-1") in stored or "req-1" in messages, (
         f"run 'req-1' of sess-b was skipped silently: stored={stored}; log={messages!r}"
     )
-    assert f"Copied {len(stored)} runs" in messages, f"log count does not match stored rows ({len(stored)}): {messages!r}"
+    assert f"Copied {len(stored)} runs" in messages, (
+        f"log count does not match stored rows ({len(stored)}): {messages!r}"
+    )
 
 
-def test_cleanup_refusal_is_not_only_non_null_check(legacy_db_with_shared_run_id):
+def test_skipped_run_stays_readable_and_cleanup_refuses_without_force(legacy_db_with_shared_run_id):
     db, db_file = legacy_db_with_shared_run_id
     asyncio.run(MigrationManager(db).up(table_type="sessions"))
-    db.cleanup_legacy_runs_column(force=True)
+
+    with pytest.raises(RuntimeError, match="Refusing to drop"):
+        db.cleanup_legacy_runs_column()
+
     loaded = SqliteDb(db_file=db_file).get_session("sess-b", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["req-1", "b-2"]
