@@ -610,6 +610,7 @@ class AgentOSClient:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[MediaFile]] = None,
         headers: Optional[Dict[str, str]] = None,
+        request_run_output: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Stream an agent run response.
@@ -624,6 +625,7 @@ class AgentOSClient:
             videos: Optional list of Video objects
             files: Optional list of MediaFile objects
             headers: HTTP headers to include in the request (optional)
+            request_run_output: Ask the server to end the stream with the terminal RunOutput
             **kwargs: Additional parameters (session_state, dependencies, metadata, etc.)
 
         Yields:
@@ -648,6 +650,8 @@ class AgentOSClient:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
             data["input_files"] = json.dumps([f.to_dict() for f in files])
+        if request_run_output:
+            data["yield_run_output"] = "true"
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
