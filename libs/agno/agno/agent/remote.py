@@ -286,7 +286,7 @@ class RemoteAgent(BaseRemote):
         validated_input = validate_input(input)
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
-        # Read here, never forwarded: the remote stream route cannot send a RunOutput over SSE
+        # Never passed to the client as a kwarg; the stream asks for the server's RunOutput via request_run_output
         yield_run_output = kwargs.pop("yield_run_output", False)
 
         # A2A protocol path
@@ -328,6 +328,7 @@ class RemoteAgent(BaseRemote):
                     dependencies=dependencies,
                     metadata=metadata,
                     headers=headers,
+                    request_run_output=yield_run_output,
                     **kwargs,
                 )
                 return self._with_run_output(event_stream) if yield_run_output else event_stream
