@@ -1306,3 +1306,33 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine):
         # Embedder was called — vector search still runs even with no text tokens
         local_embedder.get_embedding.assert_called_once_with("!@#$")
         assert results == []
+
+
+# ---------------------------------------------------------------------------
+# Expression filters: boolean values must match Postgres ``->>`` output
+# ---------------------------------------------------------------------------
+
+
+def _compile_filter(mock_engine, mock_embedder, expr: dict) -> tuple:
+    from sqlalchemy import Column, MetaData, Table
+    from sqlalchemy.dialects import postgresql
+
+    table = Table("t", MetaData(), Column("meta_data", postgresql.JSONB))
+    db = _make_db(mock_engine, mock_embedder, prefix_match=False)
+    compiled = db._dsl_to_sqlalchemy(expr, table).compile(dialect=postgresql.dialect())
+    return str(compiled), compiled.params
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(True, "true"), (False, "false"), ("high", "high"), (5, "5"), (None, "None")],
+)
+def test_dsl_eq_renders_value_like_jsonb_text(mock_engine, mock_embedder, value, expected):
+    _, params = _compile_filter(mock_engine, mock_embedder, {"op": "EQ", "key": "k", "value": value})
+    assert expected in params.values()
+
+
+def test_dsl_in_renders_booleans_lowercase(mock_engine, mock_embedder):
+    _, params = _compile_filter(mock_engine, mock_embedder, {"op": "IN", "key": "k", "values": [True, False, "x", 3]})
+    in_values = next(v for v in params.values() if isinstance(v, list))
+    assert in_values == ["true", "false", "x", "3"]
