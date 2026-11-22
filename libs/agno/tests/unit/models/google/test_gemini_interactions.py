@@ -53,6 +53,17 @@ class TestGetClient:
             _, kwargs = mock_client_cls.call_args
             assert kwargs["http_options"]["timeout"] == 30000
 
+    def test_get_client_timeout_applied_with_http_options_object(self):
+        from google.genai.types import HttpOptions
+
+        model = GeminiInteractions(
+            api_key="test-key", timeout=0.1, client_params={"http_options": HttpOptions(api_version="v1beta")}
+        )
+
+        client = model.get_client()
+
+        assert client._api_client._http_options.timeout == 100
+
 
 class TestFormatTools:
     """Tests for tool formatting."""

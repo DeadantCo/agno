@@ -25,7 +25,7 @@ from agno.models.google.utils import media_to_content_item
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
-from agno.utils.gemini import inject_agno_client_header
+from agno.utils.gemini import apply_timeout_to_client_params, inject_agno_client_header
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -267,15 +267,10 @@ class GeminiInteractions(Model):
             log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
         client_params["api_key"] = self.api_key
 
-        if self.timeout is not None:
-            http_options = client_params.get("http_options", {})
-            if isinstance(http_options, dict):
-                http_options["timeout"] = int(self.timeout * 1000)
-                client_params["http_options"] = http_options
-
         if self.client_params:
             client_params.update(self.client_params)
 
+        client_params = apply_timeout_to_client_params(client_params, self.timeout)
         client_params = inject_agno_client_header(client_params)
 
         self.client = genai.Client(**client_params)
